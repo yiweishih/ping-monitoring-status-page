@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  ping-monitor:
+    build: .
+    container_name: network-ping-monitor
+    ports:
+      - "30500:30500"
+    volumes:
+      - ./hosts.yaml:/app/hosts.yaml:ro  # Mount hosts.yaml as read-only
+    environment:
+      - FLASK_ENV=production
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:30500/api/hosts')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - ping-network
+
+networks:
+  ping-network:
+    driver: bridge

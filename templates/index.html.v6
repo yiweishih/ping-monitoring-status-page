@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Network Monitor</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .controls {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        .btn {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 0 5px;
+            font-size: 14px;
+        }
+        
+        .btn:hover {
+            background-color: #0056b3;
+        }
+        
+        .btn:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .stats {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .stat {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: bold;
+        }
+        
+        .legend {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .filters-section {
+            max-width: 1200px;
+            margin: 0 auto 20px auto;
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .filters-header {
+            text-align: center;
+            margin-bottom: 15px;
+        }
+        
+        .filters-header h3 {
+            margin: 0;
+            color: #333;
+            font-size: 16px;
+        }
+        
+        .filters-container {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .filter-row {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .filter-label {
+            font-weight: bold;
+            color: #555;
+            min-width: 60px;
+        }
+        
+        .filter-buttons {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        
+        .filter-buttons.disabled {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+        
+        .filter-toggle {
+            padding: 6px 12px;
+            border: 2px solid #dee2e6;
+            background: white;
+            color: #333;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .filter-toggle:hover:not(.disabled) {
+            border-color: #007bff;
+            background: #f8f9fa;
+        }
+        
+        .filter-toggle.active {
+            background: #007bff;
+            border-color: #007bff;
+            color: white;
+        }
+        
+        .filter-toggle.disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .logic-toggle {
+            min-width: 60px;
+            justify-content: center;
+        }
+        
+        .status-light.small {
+            width: 14px;
+            height: 14px;
+            border-width: 1px;
+        }
+        
+        .hosts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+            gap: 15px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .host-item {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            transition: box-shadow 0.2s;
+        }
+        
+        .host-item:hover {
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        
+        .status-light {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 2px solid #ddd;
+            transition: all 0.3s ease;
+            flex-shrink: 0;
+        }
+        
+        .status-light.green {
+            background-color: #28a745;
+            border-color: #1e7e34;
+            box-shadow: 0 0 10px rgba(40, 167, 69, 0.3);
+        }
+        
+        .status-light.yellow {
+            background-color: #ffc107;
+            border-color: #d39e00;
+            box-shadow: 0 0 10px rgba(255, 193, 7, 0.3);
+        }
+        
+        .status-light.red {
+            background-color: #dc3545;
+            border-color: #bd2130;
+            box-shadow: 0 0 10px rgba(220, 53, 69, 0.3);
+        }
+        
+        .status-light.unknown {
+            background-color: #6c757d;
+            border-color: #545b62;
+        }
+        
+        .host-info {
+            flex-grow: 1;
+            min-width: 0; /* Allow text to shrink */
+        }
+        
+        .host-ip-container {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 4px;
+            flex-wrap: wrap;
+        }
+        
+        .host-ip {
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .host-type-tag {
+            display: inline-block;
+            padding: 2px 7px;
+            border-radius: 11px;
+            font-size: 10px;
+            font-weight: 500;
+            color: white;
+            text-shadow: 0 1px 1px rgba(0,0,0,0.2);
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        
+        .host-details {
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .last-updated {
+            text-align: center;
+            margin-top: 20px;
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .loading {
+            text-align: center;
+            color: #666;
+            font-style: italic;
+        }
+        
+        @media (max-width: 768px) {
+            .hosts-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .stats, .legend {
+                flex-direction: column;
+                gap: 15px;
+            }
+            
+            .host-ip-container {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 4px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🌐 Network Monitor</h1>
+        <p>Real-time ping status monitoring</p>
+    </div>
+    
+    <div class="controls">
+        <button class="btn" onclick="pingAll()" id="pingBtn">🚀 Start Ping Check</button>
+        <button class="btn" onclick="loadHosts()">📋 Reload Hosts</button>
+    </div>
+    
+    <div class="stats">
+        <div class="stat">
+            <div class="status-light green"></div>
+            <span>Online (≤50ms): <span id="greenCount">0</span></span>
+        </div>
+        <div class="stat">
+            <div class="status-light yellow"></div>
+            <span>Slow (>50ms): <span id="yellowCount">0</span></span>
+        </div>
+        <div class="stat">
+            <div class="status-light red"></div>
+            <span>Offline: <span id="redCount">0</span></span>
+        </div>
+    </div>
+    
+    <div class="filters-section">
+        <div class="filters-header">
+            <h3>Filters</h3>
+        </div>
+        <div class="filters-container">
+            <div class="filter-row">
+                <span class="filter-label">Show:</span>
+                <button class="filter-toggle active" id="filterAll" onclick="toggleFilter('all')">All</button>
+            </div>
+            <div class="filter-row">
+                <span class="filter-label">Types:</span>
+                <div id="typeFilters" class="filter-buttons disabled">
+                    <!-- Host type buttons will be generated dynamically -->
+                </div>
+            </div>
+            <div class="filter-row">
+                <span class="filter-label">Status:</span>
+                <div class="filter-buttons disabled" id="statusFilters">
+                    <button class="filter-toggle status-filter" id="filterGreen" onclick="toggleFilter('green')">
+                        <div class="status-light green small"></div> Online
+                    </button>
+                    <button class="filter-toggle status-filter" id="filterYellow" onclick="toggleFilter('yellow')">
+                        <div class="status-light yellow small"></div> Slow
+                    </button>
+                    <button class="filter-toggle status-filter" id="filterRed" onclick="toggleFilter('red')">
+                        <div class="status-light red small"></div> Offline
+                    </button>
+                </div>
+            </div>
+            <div class="filter-row">
+                <span class="filter-label">Logic:</span>
+                <button class="filter-toggle logic-toggle disabled" id="filterLogic" onclick="toggleLogic()">AND</button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="legend">
+        <div class="legend-item">
+            <div class="status-light green"></div>
+            <span>Pingable, latency ≤ 50ms</span>
+        </div>
+        <div class="legend-item">
+            <div class="status-light yellow"></div>
+            <span>Pingable, latency > 50ms</span>
+        </div>
+        <div class="legend-item">
+            <div class="status-light red"></div>
+            <span>Timeout / Unreachable</span>
+        </div>
+    </div>
+    
+    <div class="hosts-grid" id="hostsGrid">
+        <div class="loading">Loading hosts...</div>
+    </div>
+    
+    <div class="last-updated">
+        <span id="lastUpdated">Loading... automatic monitoring will start shortly</span>
+    </div>
+
+    <script>
+        let hosts = [];
+        let isRunning = false;
+        let currentResults = {};
+        let filterState = {
+            showAll: true,
+            types: new Set(),
+            statuses: new Set(),
+            logic: 'AND' // 'AND' or 'OR'
+        };
+        let availableTypes = new Set();
+
+        // Load hosts and start monitoring on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            loadHosts();
+            // Start monitoring immediately
+            setTimeout(loadStatusAndDisplay, 1000); // Give hosts a second to load first
+        });
+
+        async function loadStatusAndDisplay() {
+            try {
+                const response = await fetch('/api/status');
+                const results = await response.json();
+                
+                // If we have results, display them
+                if (Object.keys(results).length > 0) {
+                    currentResults = results;
+                    applyFiltersAndDisplay();
+                    
+                    document.getElementById('lastUpdated').textContent = 
+                        `Last updated: ${new Date().toLocaleString()} (auto-refresh)`;
+                }
+            } catch (error) {
+                console.error('Error loading status:', error);
+            }
+        }
+
+        async function loadHosts() {
+            try {
+                const response = await fetch('/api/hosts');
+                hosts = await response.json();
+                
+                // Extract unique types for filter buttons
+                availableTypes.clear();
+                hosts.forEach(host => availableTypes.add(host.type));
+                
+                generateTypeFilterButtons();
+                renderHosts();
+            } catch (error) {
+                console.error('Error loading hosts:', error);
+                document.getElementById('hostsGrid').innerHTML = 
+                    '<div class="loading">Error loading hosts</div>';
+            }
+        }
+
+        function generateTypeFilterButtons() {
+            const typeFiltersContainer = document.getElementById('typeFilters');
+            typeFiltersContainer.innerHTML = '';
+            
+            Array.from(availableTypes).forEach(type => {
+                const button = document.createElement('button');
+                button.className = 'filter-toggle';
+                button.id = `filter${type.replace(/[^a-zA-Z0-9]/g, '')}`;
+                button.textContent = type;
+                button.onclick = () => toggleFilter(type);
+                typeFiltersContainer.appendChild(button);
+            });
+        }
+
+        function renderHosts() {
+            const grid = document.getElementById('hostsGrid');
+            if (hosts.length === 0) {
+                grid.innerHTML = '<div class="loading">No hosts configured</div>';
+                return;
+            }
+
+            // Render all hosts initially
+            grid.innerHTML = hosts.map(host => `
+                <div class="host-item" id="host-${host.ip.replace(/\./g, '-')}" data-type="${host.type}" data-status="unknown">
+                    <div class="status-light unknown"></div>
+                    <div class="host-info">
+                        <div class="host-ip-container">
+                            <div class="host-ip">${host.ip}</div>
+                            <span class="host-type-tag" style="background-color: ${host.color}">${host.type}</span>
+                        </div>
+                        <div class="host-details">Not checked</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function applyFiltersAndDisplay() {
+            const allHostElements = document.querySelectorAll('.host-item');
+            let visibleHosts = [];
+            
+            if (filterState.showAll) {
+                // Show all hosts
+                allHostElements.forEach(element => {
+                    element.style.display = 'flex';
+                    const ip = element.id.replace('host-', '').replace(/-/g, '.');
+                    if (currentResults[ip]) {
+                        visibleHosts.push(ip);
+                    }
+                });
+            } else {
+                // Apply filters
+                allHostElements.forEach(element => {
+                    const ip = element.id.replace('host-', '').replace(/-/g, '.');
+                    const hostType = element.dataset.type;
+                    const hostStatus = element.dataset.status;
+                    
+                    let shouldShow = false;
+                    
+                    // Check if any filters are selected
+                    const hasTypeFilter = filterState.types.size > 0;
+                    const hasStatusFilter = filterState.statuses.size > 0;
+                    
+                    if (!hasTypeFilter && !hasStatusFilter) {
+                        // No filters selected, show nothing
+                        shouldShow = false;
+                    } else if (filterState.logic === 'AND') {
+                        // AND logic: must match type AND status (if both are selected)
+                        const typeMatch = !hasTypeFilter || filterState.types.has(hostType);
+                        const statusMatch = !hasStatusFilter || filterState.statuses.has(hostStatus);
+                        shouldShow = typeMatch && statusMatch;
+                    } else {
+                        // OR logic: match type OR status
+                        const typeMatch = hasTypeFilter && filterState.types.has(hostType);
+                        const statusMatch = hasStatusFilter && filterState.statuses.has(hostStatus);
+                        shouldShow = typeMatch || statusMatch;
+                    }
+                    
+                    element.style.display = shouldShow ? 'flex' : 'none';
+                    if (shouldShow && currentResults[ip]) {
+                        visibleHosts.push(ip);
+                    }
+                });
+            }
+            
+            // Update hosts display with current results
+            updateHostsDisplay(currentResults);
+            
+            // Update stats to reflect only visible hosts
+            updateStatsForVisible(visibleHosts);
+        }
+
+        function toggleFilter(filterType) {
+            if (filterType === 'all') {
+                filterState.showAll = !filterState.showAll;
+                document.getElementById('filterAll').classList.toggle('active', filterState.showAll);
+                
+                // Update other filter states
+                const otherFilters = document.querySelectorAll('.filter-buttons');
+                const logicToggle = document.getElementById('filterLogic');
+                
+                if (filterState.showAll) {
+                    // Disable other filters
+                    otherFilters.forEach(container => container.classList.add('disabled'));
+                    logicToggle.classList.add('disabled');
+                    
+                    // Clear other filter selections
+                    filterState.types.clear();
+                    filterState.statuses.clear();
+                    document.querySelectorAll('.filter-toggle:not(#filterAll)').forEach(btn => {
+                        btn.classList.remove('active');
+                    });
+                } else {
+                    // Enable other filters
+                    otherFilters.forEach(container => container.classList.remove('disabled'));
+                    logicToggle.classList.remove('disabled');
+                }
+            } else if (availableTypes.has(filterType)) {
+                // Type filter
+                if (filterState.types.has(filterType)) {
+                    filterState.types.delete(filterType);
+                    document.getElementById(`filter${filterType.replace(/[^a-zA-Z0-9]/g, '')}`).classList.remove('active');
+                } else {
+                    filterState.types.add(filterType);
+                    document.getElementById(`filter${filterType.replace(/[^a-zA-Z0-9]/g, '')}`).classList.add('active');
+                }
+            } else if (['green', 'yellow', 'red'].includes(filterType)) {
+                // Status filter
+                if (filterState.statuses.has(filterType)) {
+                    filterState.statuses.delete(filterType);
+                    document.getElementById(`filter${filterType.charAt(0).toUpperCase() + filterType.slice(1)}`).classList.remove('active');
+                } else {
+                    filterState.statuses.add(filterType);
+                    document.getElementById(`filter${filterType.charAt(0).toUpperCase() + filterType.slice(1)}`).classList.add('active');
+                }
+            }
+            
+            applyFiltersAndDisplay();
+        }
+
+        function toggleLogic() {
+            if (filterState.showAll) return;
+            
+            filterState.logic = filterState.logic === 'AND' ? 'OR' : 'AND';
+            document.getElementById('filterLogic').textContent = filterState.logic;
+            applyFiltersAndDisplay();
+        }
+
+        async function pingAll() {
+            if (isRunning) return;
+            
+            isRunning = true;
+            const btn = document.getElementById('pingBtn');
+            btn.textContent = '⏳ Checking...';
+            btn.disabled = true;
+
+            try {
+                const response = await fetch('/api/ping-all');
+                const results = await response.json();
+                
+                currentResults = results;
+                applyFiltersAndDisplay();
+                
+                document.getElementById('lastUpdated').textContent = 
+                    `Last updated: ${new Date().toLocaleString()} (manual check)`;
+                    
+            } catch (error) {
+                console.error('Error during ping check:', error);
+                alert('Error during ping check. Please try again.');
+            } finally {
+                isRunning = false;
+                btn.textContent = '🚀 Start Ping Check';
+                btn.disabled = false;
+            }
+        }
+
+        function updateHostsDisplay(results) {
+            Object.entries(results).forEach(([host, result]) => {
+                const hostElement = document.getElementById(`host-${host.replace(/\./g, '-')}`);
+                if (!hostElement) return;
+
+                const light = hostElement.querySelector('.status-light');
+                const details = hostElement.querySelector('.host-details');
+
+                // Update data attribute for filtering
+                hostElement.dataset.status = result.status;
+
+                // Remove all status classes
+                light.classList.remove('green', 'yellow', 'red', 'unknown');
+                
+                // Add appropriate status class
+                light.classList.add(result.status);
+
+                // Update details text
+                let detailText = result.timestamp || 'Unknown';
+                if (result.latency !== null) {
+                    detailText += ` | ${result.latency}ms`;
+                }
+                details.textContent = detailText;
+            });
+        }
+
+        function updateStatsForVisible(visibleHosts) {
+            const counts = { green: 0, yellow: 0, red: 0 };
+            
+            visibleHosts.forEach(ip => {
+                const result = currentResults[ip];
+                if (result && counts[result.status] !== undefined) {
+                    counts[result.status]++;
+                }
+            });
+            
+            document.getElementById('greenCount').textContent = counts.green;
+            document.getElementById('yellowCount').textContent = counts.yellow;
+            document.getElementById('redCount').textContent = counts.red;
+        }
+
+        function updateStats(results) {
+            // This function is kept for compatibility but now handled by updateStatsForVisible
+            const visibleElements = Array.from(document.querySelectorAll('.host-item')).filter(el => el.style.display !== 'none');
+            const visibleHosts = visibleElements.map(el => el.id.replace('host-', '').replace(/-/g, '.'));
+            updateStatsForVisible(visibleHosts);
+        }
+
+        // Auto-refresh every 30 seconds
+        setInterval(() => {
+            if (!isRunning) {
+                loadStatusAndDisplay();
+            }
+        }, 30000);  // 30 seconds
+    </script>
+</body>
+</html>

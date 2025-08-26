@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+"""
+Flask Network Ping Monitor
+Backend with parallel processing and background monitoring
+"""
+
+from flask import Flask, render_template, jsonify
+import yaml
+import subprocess
+import platform
+import time
+import threading
+from datetime import datetime
+from typing import Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = Flask(__name__)
+
+class PingMonitor:
+    def __init__(self, hosts_file='hosts.yaml'):
+        self.hosts_file = hosts_file
+        self.hosts = []
+        self.results = {}
+        self.config = {}
+        self.is_running = False
+        self.background_thread = None
+        self.lock = threading.Lock()  # Thread safety for results
+        
+        # Load configuration
+        self.load_config()
+        
+        # Start background monitoring
+        self.start_background_monitoring()
+        
+    def load_config(self):
+        """Load hosts and configuration from YAML file"""
+        try:
+            with open(self.hosts_file, 'r') as f:
+                data = yaml.safe_load(f)
+                logger.info(f"Raw YAML data: {data}")
+                
+                if data is None:
+                    logger.error("YAML file is empty or contains only comments")
+                    self.hosts = []
+                    return
+                    
+                if not isinstance(data, dict):
+                    logger.error(f"YAML data is not a dictionary, got: {type(data)}")
+                    self.hosts = []
+                    return
+                
+                self.hosts = data.get('hosts', [])
+                self.config = data.get('config', {})
+                logger.info(f"Loaded {len(self.hosts)} hosts from {self.hosts_file}")
+                
+                # Initialize results with unknown status
+                with self.lock:
+                    for host in self.hosts:
+                        if host not in self.results:
+                            self.results[host] = {
+                                'status': 'unknown',
+                                'latency': None,
+                                'timestamp': None
+                            }
+                
+        except FileNotFoundError:
+            logger.error(f"Configuration file {self.hosts_file} not found")
+            self.hosts = []
+        except yaml.YAMLError as e:
+            logger.error(f"Error parsing YAML file: {e}")
+            self.hosts = []
+        except Exception as e:
+            logger.error(f"Error loading hosts file: {e}")
+            self.hosts = []
+    
+    def ping_host(self, host: str) -> Dict:
+        """Ping a single host and return result"""
+        system = platform.system().lower()
+        
+        try:
+            if system == 'windows':
+                cmd = ['ping', '-n', '1', '-w', '3000', host]  # 3 second timeout
+            else:
+                cmd = ['ping', '-c', '1', '-W', '3', host]    # 3 second timeout
+            
+            start_time = time.time()
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            
+            if result.returncode == 0:
+                # Parse latency from output
+                latency = self._parse_latency(result.stdout, system)
+                
+                # Determine status based on latency
+                if latency is not None and latency <= 50:
+                    status = 'green'
+                elif latency is not None and latency > 50:
+                    status = 'yellow'
+                else:
+                    status = 'green'  # Default if we can't parse latency but ping succeeded
+                
+                return {
+                    'status': status,
+                    'latency': latency,
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                }
+            else:
+                return {
+                    'status': 'red',
+                    'latency': None,
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                }
+                
+        except subprocess.TimeoutExpired:
+            return {
+                'status': 'red',
+                'latency': None,
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+        except Exception as e:
+            logger.debug(f"Error pinging {host}: {e}")
+            return {
+                'status': 'red',
+                'latency': None,
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+    
+    def _parse_latency(self, output: str, system: str) -> Optional[float]:
+        """Parse latency from ping output"""
+        try:
+            output_lower = output.lower()
+            
+            if system == 'windows':
+                # Look for "time=XXXms" or "time<1ms"
+                lines = output_lower.split('\n')
+                for line in lines:
+                    if 'time=' in line:
+                        time_part = line.split('time=')[1].split()[0]
+                        if 'ms' in time_part:
+                            return float(time_part.replace('ms', ''))
+                    elif 'time<' in line:
+                        # Handle "time<1ms"
+                        return 1.0
+            else:
+                # Linux/macOS: look for "time=XX.X ms"
+                lines = output_lower.split('\n')
+                for line in lines:
+                    if 'time=' in line:
+                        time_part = line.split('time=')[1].split()[0]
+                        return float(time_part)
+        except (IndexError, ValueError) as e:
+            logger.debug(f"Could not parse latency from output: {e}")
+        
+        return None
+    
+    def ping_all_hosts_parallel(self):
+        """Ping all hosts in parallel using ThreadPoolExecutor"""
+        if not self.hosts:
+            return
+        
+        max_workers = min(30, len(self.hosts))  # Limit concurrent pings
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all ping tasks
+            future_to_host = {executor.submit(self.ping_host, host): host for host in self.hosts}
+            
+            # Collect results as they complete
+            for future in as_completed(future_to_host):
+                host = future_to_host[future]
+                try:
+                    result = future.result()
+                    with self.lock:
+                        self.results[host] = result
+                    logger.debug(f"{host}: {result['status']} ({result['latency']}ms)")
+                except Exception as e:
+                    logger.error(f"Error pinging {host}: {e}")
+                    with self.lock:
+                        self.results[host] = {
+                            'status': 'red',
+                            'latency': None,
+                            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        }
+    
+    def background_monitor(self):
+        """Background thread function that continuously pings hosts"""
+        logger.info("Background monitoring started")
+        
+        # Initial ping check
+        self.ping_all_hosts_parallel()
+        logger.info("Initial ping check completed")
+        
+        while self.is_running:
+            try:
+                time.sleep(30)  # Wait 30 seconds
+                if self.is_running:  # Check again after sleep
+                    logger.info("Running scheduled ping check...")
+                    start_time = time.time()
+                    self.ping_all_hosts_parallel()
+                    elapsed = time.time() - start_time
+                    logger.info(f"Ping check completed in {elapsed:.2f} seconds")
+            except Exception as e:
+                logger.error(f"Error in background monitoring: {e}")
+                time.sleep(30)  # Wait before retrying
+    
+    def start_background_monitoring(self):
+        """Start the background monitoring thread"""
+        if not self.background_thread or not self.background_thread.is_alive():
+            self.is_running = True
+            self.background_thread = threading.Thread(target=self.background_monitor, daemon=True)
+            self.background_thread.start()
+            logger.info("Background monitoring thread started")
+    
+    def stop_background_monitoring(self):
+        """Stop the background monitoring thread"""
+        self.is_running = False
+        if self.background_thread and self.background_thread.is_alive():
+            self.background_thread.join(timeout=5)
+            logger.info("Background monitoring thread stopped")
+    
+    def get_results_copy(self):
+        """Get a thread-safe copy of current results"""
+        with self.lock:
+            return self.results.copy()
+    
+    def force_ping_all(self):
+        """Force an immediate ping check (for manual triggers)"""
+        logger.info("Manual ping check triggered")
+        self.ping_all_hosts_parallel()
+
+# Initialize monitor
+monitor = PingMonitor()
+
+@app.route('/')
+def index():
+    """Serve the main page"""
+    return render_template('index.html')
+
+@app.route('/api/hosts')
+def get_hosts():
+    """Return list of all hosts"""
+    return jsonify(monitor.hosts)
+
+@app.route('/api/ping-all')
+def ping_all():
+    """Force ping all hosts and return results"""
+    monitor.force_ping_all()
+    return jsonify(monitor.get_results_copy())
+
+@app.route('/api/ping/<host>')
+def ping_single(host):
+    """Ping a single host"""
+    if host in monitor.hosts:
+        result = monitor.ping_host(host)
+        with monitor.lock:
+            monitor.results[host] = result
+        return jsonify({host: result})
+    else:
+        return jsonify({'error': 'Host not found'}), 404
+
+@app.route('/api/status')
+def get_status():
+    """Get current cached status of all hosts"""
+    return jsonify(monitor.get_results_copy())
+
+@app.route('/api/reload')
+def reload_hosts():
+    """Reload hosts from YAML file"""
+    monitor.load_config()
+    return jsonify({'message': f'Reloaded {len(monitor.hosts)} hosts'})
+
+@app.route('/api/health')
+def health_check():
+    """Health check endpoint"""
+    return jsonify({
+        'status': 'healthy',
+        'hosts_count': len(monitor.hosts),
+        'monitoring_active': monitor.is_running,
+        'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    })
+
+# Cleanup on app shutdown
+import atexit
+atexit.register(monitor.stop_background_monitoring)
+
+if __name__ == '__main__':
+    try:
+        app.run(host='0.0.0.0', port=30500, debug=False)  # Turn off debug for production
+    except KeyboardInterrupt:
+        logger.info("Shutting down...")
+        monitor.stop_background_monitoring()
