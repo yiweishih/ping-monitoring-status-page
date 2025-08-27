@@ -25,7 +25,7 @@ A Flask-based web application for real-time network monitoring with parallel pin
 1. Clone the repository:
 ```bash
 git clone <repository-url>
-cd lweye
+cd ping-monitoring-status-page
 ```
 
 2. Install dependencies:
