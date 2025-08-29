@@ -68,6 +68,7 @@
             gap: 30px;
             margin-bottom: 20px;
             font-size: 14px;
+            flex-wrap: wrap; /* Allow legend items to wrap on smaller screens */
         }
         
         .legend-item {
@@ -218,6 +219,12 @@
             box-shadow: 0 0 10px rgba(220, 53, 69, 0.3);
         }
         
+        .status-light.orange { /* New style for orange status light */
+            background-color: #ff9800;
+            border-color: #e68900;
+            box-shadow: 0 0 10px rgba(255, 152, 0, 0.3);
+        }
+
         .status-light.unknown {
             background-color: #6c757d;
             border-color: #545b62;
@@ -252,7 +259,35 @@
             white-space: nowrap;
             flex-shrink: 0;
         }
-        
+
+        /* Style for the known offline tag */
+        .known-tag {
+            background-color: #dc3545; /* Red color */
+            color: white;
+            padding: 2px 7px;
+            border-radius: 11px;
+            font-size: 10px;
+            font-weight: 500;
+            white-space: nowrap;
+            flex-shrink: 0;
+            text-shadow: 0 1px 1px rgba(0,0,0,0.2);
+            margin-left: 8px; /* Spacing between tags */
+        }
+
+        /* Style for the unknown offline tag */
+        .unknown-tag {
+            background-color: #ff9800; /* Orange color */
+            color: white;
+            padding: 2px 7px;
+            border-radius: 11px;
+            font-size: 10px;
+            font-weight: 500;
+            white-space: nowrap;
+            flex-shrink: 0;
+            text-shadow: 0 1px 1px rgba(0,0,0,0.2);
+            margin-left: 8px; /* Spacing between tags */
+        }
+
         .host-details {
             font-size: 12px;
             color: #666;
@@ -281,6 +316,12 @@
                 gap: 15px;
             }
             
+            .filter-row {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 8px;
+            }
+
             .host-ip-container {
                 flex-direction: column;
                 align-items: flex-start;
@@ -297,7 +338,7 @@
     
     <div class="controls">
         <button class="btn" onclick="pingAll()" id="pingBtn">🚀 Start Ping Check</button>
-        <button class="btn" onclick="loadHosts()">📋 Reload Hosts</button>
+        <button class="btn" onclick="reloadHosts()">📋 Reload Hosts</button>
     </div>
     
     <div class="stats">
@@ -342,6 +383,14 @@
                     <button class="filter-toggle status-filter" id="filterRed" onclick="toggleFilter('red')">
                         <div class="status-light red small"></div> Offline
                     </button>
+                    <!-- Known Offline Filter Button -->
+                    <button class="filter-toggle" id="filterKnown" onclick="toggleFilter('known_offline')">
+                        <div class="status-light red small"></div> Known Offline
+                    </button>
+                    <!-- New Unknown Offline Filter Button -->
+                    <button class="filter-toggle" id="filterUnknown" onclick="toggleFilter('unknown_offline')">
+                        <div class="status-light orange small"></div> Unknown Offline
+                    </button>
                 </div>
             </div>
             <div class="filter-row">
@@ -364,6 +413,14 @@
             <div class="status-light red"></div>
             <span>Timeout / Unreachable</span>
         </div>
+        <div class="legend-item">
+            <span class="known-tag">Known</span>
+            <span>Offline, reason known (from config)</span>
+        </div>
+        <div class="legend-item">
+            <span class="unknown-tag">Unknown</span>
+            <span>Offline, reason unknown (not in config)</span>
+        </div>
     </div>
     
     <div class="hosts-grid" id="hostsGrid">
@@ -382,23 +439,23 @@
             showAll: true,
             types: new Set(),
             statuses: new Set(),
+            tags: new Set(), // Now for 'known_offline' and 'unknown_offline'
             logic: 'AND' // 'AND' or 'OR'
         };
         let availableTypes = new Set();
 
-        // Load hosts and start monitoring on page load
+        const API_BASE_URL = window.location.origin;
+
         document.addEventListener('DOMContentLoaded', function() {
             loadHosts();
-            // Start monitoring immediately
-            setTimeout(loadStatusAndDisplay, 1000); // Give hosts a second to load first
+            setTimeout(loadStatusAndDisplay, 1000);
         });
 
         async function loadStatusAndDisplay() {
             try {
-                const response = await fetch('/api/status');
+                const response = await fetch(`${API_BASE_URL}/api/status`);
                 const results = await response.json();
                 
-                // If we have results, display them
                 if (Object.keys(results).length > 0) {
                     currentResults = results;
                     applyFiltersAndDisplay();
@@ -413,10 +470,9 @@
 
         async function loadHosts() {
             try {
-                const response = await fetch('/api/hosts');
+                const response = await fetch(`${API_BASE_URL}/api/hosts`);
                 hosts = await response.json();
                 
-                // Extract unique types for filter buttons
                 availableTypes.clear();
                 hosts.forEach(host => availableTypes.add(host.type));
                 
@@ -450,14 +506,18 @@
                 return;
             }
 
-            // Render all hosts initially
             grid.innerHTML = hosts.map(host => `
-                <div class="host-item" id="host-${host.ip.replace(/\./g, '-')}" data-type="${host.type}" data-status="unknown">
+                <div class="host-item" id="host-${host.ip.replace(/\./g, '-')}" 
+                     data-type="${host.type}" 
+                     data-status="unknown"
+                     data-known-offline="${host.known_offline}">
                     <div class="status-light unknown"></div>
                     <div class="host-info">
                         <div class="host-ip-container">
                             <div class="host-ip">${host.ip}</div>
                             <span class="host-type-tag" style="background-color: ${host.color}">${host.type}</span>
+                            <span class="known-tag" style="display: none;">Known</span> 
+                            <span class="unknown-tag" style="display: none;">Unknown</span> 
                         </div>
                         <div class="host-details">Not checked</div>
                     </div>
@@ -469,54 +529,49 @@
             const allHostElements = document.querySelectorAll('.host-item');
             let visibleHosts = [];
             
-            if (filterState.showAll) {
-                // Show all hosts
-                allHostElements.forEach(element => {
-                    element.style.display = 'flex';
-                    const ip = element.id.replace('host-', '').replace(/-/g, '.');
-                    if (currentResults[ip]) {
-                        visibleHosts.push(ip);
+            const hasActiveTypeFilters = filterState.types.size > 0;
+            const hasActiveStatusFilters = filterState.statuses.size > 0;
+            const hasActiveTagFilters = filterState.tags.size > 0; // For 'known_offline' and 'unknown_offline'
+            const anyFilterIsActive = hasActiveTypeFilters || hasActiveStatusFilters || hasActiveTagFilters;
+
+            allHostElements.forEach(element => {
+                const ip = element.id.replace('host-', '').replace(/-/g, '.');
+                const hostType = element.dataset.type;
+                const hostStatus = element.dataset.status;
+                // Get these from currentResults as they reflect the dynamic state
+                const currentHostResult = currentResults[ip] || {};
+                const isHostKnownOffline = currentHostResult.show_known_tag;
+                const isHostUnknownOffline = currentHostResult.show_unknown_tag;
+                
+                let shouldShow = false;
+                
+                if (filterState.showAll || !anyFilterIsActive) {
+                    shouldShow = true;
+                } else {
+                    let typeMatch = !hasActiveTypeFilters || filterState.types.has(hostType);
+                    let statusMatch = !hasActiveStatusFilters || filterState.statuses.has(hostStatus);
+                    
+                    let tagKnownMatch = (filterState.tags.has('known_offline') && isHostKnownOffline);
+                    let tagUnknownMatch = (filterState.tags.has('unknown_offline') && isHostUnknownOffline);
+                    
+                    let tagMatch = !hasActiveTagFilters || (tagKnownMatch || tagUnknownMatch);
+
+                    if (filterState.logic === 'AND') {
+                        shouldShow = typeMatch && statusMatch && tagMatch;
+                    } else { // OR logic
+                        shouldShow = (hasActiveTypeFilters && typeMatch) || 
+                                     (hasActiveStatusFilters && statusMatch) ||
+                                     (hasActiveTagFilters && (tagKnownMatch || tagUnknownMatch));
                     }
-                });
-            } else {
-                // Apply filters
-                allHostElements.forEach(element => {
-                    const ip = element.id.replace('host-', '').replace(/-/g, '.');
-                    const hostType = element.dataset.type;
-                    const hostStatus = element.dataset.status;
-                    
-                    let shouldShow = false;
-                    
-                    // Check if any filters are selected
-                    const hasTypeFilter = filterState.types.size > 0;
-                    const hasStatusFilter = filterState.statuses.size > 0;
-                    
-                    if (!hasTypeFilter && !hasStatusFilter) {
-                        // No filters selected, show nothing
-                        shouldShow = false;
-                    } else if (filterState.logic === 'AND') {
-                        // AND logic: must match type AND status (if both are selected)
-                        const typeMatch = !hasTypeFilter || filterState.types.has(hostType);
-                        const statusMatch = !hasStatusFilter || filterState.statuses.has(hostStatus);
-                        shouldShow = typeMatch && statusMatch;
-                    } else {
-                        // OR logic: match type OR status
-                        const typeMatch = hasTypeFilter && filterState.types.has(hostType);
-                        const statusMatch = hasStatusFilter && filterState.statuses.has(hostStatus);
-                        shouldShow = typeMatch || statusMatch;
-                    }
-                    
-                    element.style.display = shouldShow ? 'flex' : 'none';
-                    if (shouldShow && currentResults[ip]) {
-                        visibleHosts.push(ip);
-                    }
-                });
-            }
+                }
+                
+                element.style.display = shouldShow ? 'flex' : 'none';
+                if (shouldShow && currentResults[ip]) {
+                    visibleHosts.push(ip);
+                }
+            });
             
-            // Update hosts display with current results
             updateHostsDisplay(currentResults);
-            
-            // Update stats to reflect only visible hosts
             updateStatsForVisible(visibleHosts);
         }
 
@@ -525,43 +580,49 @@
                 filterState.showAll = !filterState.showAll;
                 document.getElementById('filterAll').classList.toggle('active', filterState.showAll);
                 
-                // Update other filter states
-                const otherFilters = document.querySelectorAll('.filter-buttons');
+                const otherFiltersContainers = document.querySelectorAll('.filter-buttons');
                 const logicToggle = document.getElementById('filterLogic');
                 
                 if (filterState.showAll) {
-                    // Disable other filters
-                    otherFilters.forEach(container => container.classList.add('disabled'));
+                    otherFiltersContainers.forEach(container => container.classList.add('disabled'));
                     logicToggle.classList.add('disabled');
                     
-                    // Clear other filter selections
                     filterState.types.clear();
                     filterState.statuses.clear();
+                    filterState.tags.clear(); // Clear all tag filters
+                    
                     document.querySelectorAll('.filter-toggle:not(#filterAll)').forEach(btn => {
                         btn.classList.remove('active');
                     });
                 } else {
-                    // Enable other filters
-                    otherFilters.forEach(container => container.classList.remove('disabled'));
+                    otherFiltersContainers.forEach(container => container.classList.remove('disabled'));
                     logicToggle.classList.remove('disabled');
                 }
             } else if (availableTypes.has(filterType)) {
-                // Type filter
                 if (filterState.types.has(filterType)) {
                     filterState.types.delete(filterType);
-                    document.getElementById(`filter${filterType.replace(/[^a-zA-Z0-9]/g, '')}`).classList.remove('active');
                 } else {
                     filterState.types.add(filterType);
-                    document.getElementById(`filter${filterType.replace(/[^a-zA-Z0-9]/g, '')}`).classList.add('active');
                 }
+                document.getElementById(`filter${filterType.replace(/[^a-zA-Z0-9]/g, '')}`).classList.toggle('active');
             } else if (['green', 'yellow', 'red'].includes(filterType)) {
-                // Status filter
                 if (filterState.statuses.has(filterType)) {
                     filterState.statuses.delete(filterType);
-                    document.getElementById(`filter${filterType.charAt(0).toUpperCase() + filterType.slice(1)}`).classList.remove('active');
                 } else {
                     filterState.statuses.add(filterType);
-                    document.getElementById(`filter${filterType.charAt(0).toUpperCase() + filterType.slice(1)}`).classList.add('active');
+                }
+                document.getElementById(`filter${filterType.charAt(0).toUpperCase() + filterType.slice(1)}`).classList.toggle('active');
+            } else if (filterType === 'known_offline' || filterType === 'unknown_offline') { // Handle both known and unknown tags
+                if (filterState.tags.has(filterType)) {
+                    filterState.tags.delete(filterType);
+                } else {
+                    filterState.tags.add(filterType);
+                }
+                // Toggle active class for both filter buttons based on their IDs
+                if (filterType === 'known_offline') {
+                    document.getElementById('filterKnown').classList.toggle('active');
+                } else if (filterType === 'unknown_offline') {
+                    document.getElementById('filterUnknown').classList.toggle('active');
                 }
             }
             
@@ -585,7 +646,7 @@
             btn.disabled = true;
 
             try {
-                const response = await fetch('/api/ping-all');
+                const response = await fetch(`${API_BASE_URL}/api/ping-all`);
                 const results = await response.json();
                 
                 currentResults = results;
@@ -596,9 +657,15 @@
                     
             } catch (error) {
                 console.error('Error during ping check:', error);
-                alert('Error during ping check. Please try again.');
+                const lastUpdatedElement = document.getElementById('lastUpdated');
+                lastUpdatedElement.textContent = `Error during ping check: ${error.message}. Please try again.`;
+                lastUpdatedElement.style.color = 'red';
             } finally {
                 isRunning = false;
+                const lastUpdatedElement = document.getElementById('lastUpdated');
+                if (lastUpdatedElement.style.color === 'red') {
+                    lastUpdatedElement.style.color = '#666';
+                }
                 btn.textContent = '🚀 Start Ping Check';
                 btn.disabled = false;
             }
@@ -611,22 +678,42 @@
 
                 const light = hostElement.querySelector('.status-light');
                 const details = hostElement.querySelector('.host-details');
+                const ipContainer = hostElement.querySelector('.host-ip-container');
+                const knownTagElement = ipContainer.querySelector('.known-tag');
+                const unknownTagElement = ipContainer.querySelector('.unknown-tag'); 
 
-                // Update data attribute for filtering
                 hostElement.dataset.status = result.status;
+                // Keep the original known_offline config from initial load, for display purposes we use show_known_tag/show_unknown_tag
+                hostElement.dataset.knownOffline = result.known_offline; 
+                hostElement.dataset.showKnownTag = result.show_known_tag;
+                hostElement.dataset.showUnknownTag = result.show_unknown_tag;
 
-                // Remove all status classes
-                light.classList.remove('green', 'yellow', 'red', 'unknown');
-                
-                // Add appropriate status class
+                light.classList.remove('green', 'yellow', 'red', 'orange', 'unknown'); 
                 light.classList.add(result.status);
 
-                // Update details text
                 let detailText = result.timestamp || 'Unknown';
                 if (result.latency !== null) {
                     detailText += ` | ${result.latency}ms`;
                 }
                 details.textContent = detailText;
+                
+                // Logic for showing/hiding the 'Known' tag
+                if (knownTagElement) {
+                    if (result.show_known_tag) {
+                        knownTagElement.style.display = 'inline-block';
+                    } else {
+                        knownTagElement.style.display = 'none';
+                    }
+                }
+
+                // Logic for showing/hiding the 'Unknown' tag
+                if (unknownTagElement) {
+                    if (result.show_unknown_tag) {
+                        unknownTagElement.style.display = 'inline-block';
+                    } else {
+                        unknownTagElement.style.display = 'none';
+                    }
+                }
             });
         }
 
@@ -645,19 +732,11 @@
             document.getElementById('redCount').textContent = counts.red;
         }
 
-        function updateStats(results) {
-            // This function is kept for compatibility but now handled by updateStatsForVisible
-            const visibleElements = Array.from(document.querySelectorAll('.host-item')).filter(el => el.style.display !== 'none');
-            const visibleHosts = visibleElements.map(el => el.id.replace('host-', '').replace(/-/g, '.'));
-            updateStatsForVisible(visibleHosts);
-        }
-
-        // Auto-refresh every 30 seconds
         setInterval(() => {
             if (!isRunning) {
                 loadStatusAndDisplay();
             }
-        }, 30000);  // 30 seconds
+        }, 30000);
     </script>
 </body>
 </html>

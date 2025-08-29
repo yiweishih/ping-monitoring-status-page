@@ -4,7 +4,7 @@ Flask Network Ping Monitor
 Backend with parallel processing and background monitoring
 """
 
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 import yaml
 import subprocess
 import platform
@@ -14,18 +14,20 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
+from flask_cors import CORS # Import CORS
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+CORS(app) # Enable CORS for all routes
 
 class PingMonitor:
     def __init__(self, hosts_file='hosts.yaml'):
         self.hosts_file = hosts_file
         self.hosts = []
-        self.host_info = {}  # Store host metadata (type, color)
+        self.host_info = {}  # Store host metadata (type, color, known_offline)
         self.results = {}
         self.config = {}
         self.is_running = False
@@ -61,27 +63,57 @@ class PingMonitor:
                 self.host_info = {}
                 
                 if hosts_data and isinstance(hosts_data[0], dict) and 'type' in hosts_data[0]:
-                    # New format with tags
+                    # New format with tags and support known_offline
                     for group in hosts_data:
                         group_type = group.get('type', 'Unknown')
                         group_color = group.get('color', '#6c757d')
-                        group_ips = group.get('ips', [])
+                        group_ips_entries = group.get('ips', [])
                         
-                        for ip in group_ips:
+                        for ip_entry in group_ips_entries:
+                            ip = None
+                            known_offline = False
+                            
+                            if isinstance(ip_entry, str):
+                                ip = ip_entry
+                                known_offline = False
+                            elif isinstance(ip_entry, dict):
+                                # Assuming dictionary format is {ip: {known_offline: true/false}}
+                                # Take the first key as the IP
+                                ip = list(ip_entry.keys())[0] 
+                                ip_details = ip_entry[ip]
+                                if isinstance(ip_details, dict):
+                                    known_offline = ip_details.get('known_offline', False)
+                            
+                            if ip: # Only add if IP was successfully extracted
+                                self.hosts.append(ip)
+                                self.host_info[ip] = {
+                                    'type': group_type,
+                                    'color': group_color,
+                                    'known_offline': known_offline
+                                }
+                        logger.info(f"Loaded {len(group_ips_entries)} hosts for type '{group_type}'")
+                else:
+                    # Old format - simple list (also supports mixed, where some ips are dicts)
+                    for host_item in hosts_data:
+                        ip = None
+                        known_offline = False
+                        if isinstance(host_item, str):
+                            ip = host_item
+                            known_offline = False
+                        elif isinstance(host_item, dict):
+                            # This handles the case where the top-level 'hosts' list directly contains dicts
+                            # like - 10.48.9.61: {known_offline: true}
+                            ip = list(host_item.keys())[0]
+                            ip_details = host_item[ip]
+                            if isinstance(ip_details, dict):
+                                known_offline = ip_details.get('known_offline', False)
+                                
+                        if ip:
                             self.hosts.append(ip)
                             self.host_info[ip] = {
-                                'type': group_type,
-                                'color': group_color
-                            }
-                        logger.info(f"Loaded {len(group_ips)} hosts for type '{group_type}'")
-                else:
-                    # Old format - simple list
-                    for host in hosts_data:
-                        if isinstance(host, str):
-                            self.hosts.append(host)
-                            self.host_info[host] = {
-                                'type': 'Unknown',
-                                'color': '#6c757d'
+                                'type': 'Unknown', # Default type for old/mixed format if not specified
+                                'color': '#6c757d', # Default color
+                                'known_offline': known_offline
                             }
                 
                 self.config = data.get('config', {})
@@ -96,7 +128,8 @@ class PingMonitor:
                                 'latency': None,
                                 'timestamp': None,
                                 'type': self.host_info[host]['type'],
-                                'color': self.host_info[host]['color']
+                                'color': self.host_info[host]['color'],
+                                'known_offline': self.host_info[host]['known_offline']
                             }
                 
         except FileNotFoundError:
@@ -112,6 +145,9 @@ class PingMonitor:
     def ping_host(self, host: str) -> Dict:
         """Ping a single host and return result"""
         system = platform.system().lower()
+        
+        # Get known_offline status from host_info
+        known_offline_flag = self.host_info.get(host, {}).get('known_offline', False)
         
         try:
             if system == 'windows':
@@ -139,7 +175,8 @@ class PingMonitor:
                     'latency': latency,
                     'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                     'type': self.host_info.get(host, {}).get('type', 'Unknown'),
-                    'color': self.host_info.get(host, {}).get('color', '#6c757d')
+                    'color': self.host_info.get(host, {}).get('color', '#6c757d'),
+                    'known_offline': known_offline_flag # Include known_offline in results
                 }
             else:
                 return {
@@ -147,7 +184,8 @@ class PingMonitor:
                     'latency': None,
                     'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                     'type': self.host_info.get(host, {}).get('type', 'Unknown'),
-                    'color': self.host_info.get(host, {}).get('color', '#6c757d')
+                    'color': self.host_info.get(host, {}).get('color', '#6c757d'),
+                    'known_offline': known_offline_flag # Include known_offline in results
                 }
                 
         except subprocess.TimeoutExpired:
@@ -156,7 +194,8 @@ class PingMonitor:
                 'latency': None,
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'type': self.host_info.get(host, {}).get('type', 'Unknown'),
-                'color': self.host_info.get(host, {}).get('color', '#6c757d')
+                'color': self.host_info.get(host, {}).get('color', '#6c757d'),
+                'known_offline': known_offline_flag # Include known_offline in results
             }
         except Exception as e:
             logger.debug(f"Error pinging {host}: {e}")
@@ -165,7 +204,8 @@ class PingMonitor:
                 'latency': None,
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'type': self.host_info.get(host, {}).get('type', 'Unknown'),
-                'color': self.host_info.get(host, {}).get('color', '#6c757d')
+                'color': self.host_info.get(host, {}).get('color', '#6c757d'),
+                'known_offline': known_offline_flag # Include known_offline in results
             }
     
     def _parse_latency(self, output: str, system: str) -> Optional[float]:
@@ -217,13 +257,16 @@ class PingMonitor:
                     logger.debug(f"{host}: {result['status']} ({result['latency']}ms)")
                 except Exception as e:
                     logger.error(f"Error pinging {host}: {e}")
+                    # Ensure known_offline is still present even on error
+                    known_offline_flag = self.host_info.get(host, {}).get('known_offline', False)
                     with self.lock:
                         self.results[host] = {
                             'status': 'red',
                             'latency': None,
                             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                             'type': self.host_info.get(host, {}).get('type', 'Unknown'),
-                            'color': self.host_info.get(host, {}).get('color', '#6c757d')
+                            'color': self.host_info.get(host, {}).get('color', '#6c757d'),
+                            'known_offline': known_offline_flag
                         }
     
     def background_monitor(self):
@@ -265,7 +308,25 @@ class PingMonitor:
     def get_results_copy(self):
         """Get a thread-safe copy of current results"""
         with self.lock:
-            return self.results.copy()
+            results_copy = {}
+            for host, result in self.results.items():
+                result_copy = result.copy()
+                
+                is_known_offline_configured = result_copy.get('known_offline', False)
+
+                # Determine if 'known' tag should be shown
+                if result_copy['status'] == 'red' and is_known_offline_configured:
+                    result_copy['show_known_tag'] = True
+                    result_copy['show_unknown_tag'] = False # Ensure only one tag is shown
+                # Determine if 'unknown' tag should be shown (offline but not known_offline)
+                elif result_copy['status'] == 'red' and not is_known_offline_configured:
+                    result_copy['show_known_tag'] = False
+                    result_copy['show_unknown_tag'] = True 
+                else:
+                    result_copy['show_known_tag'] = False
+                    result_copy['show_unknown_tag'] = False
+                results_copy[host] = result_copy
+            return results_copy
     
     def force_ping_all(self):
         """Force an immediate ping check (for manual triggers)"""
@@ -288,7 +349,8 @@ def get_hosts():
         host_data = {
             'ip': host,
             'type': monitor.host_info.get(host, {}).get('type', 'Unknown'),
-            'color': monitor.host_info.get(host, {}).get('color', '#6c757d')
+            'color': monitor.host_info.get(host, {}).get('color', '#6c757d'),
+            'known_offline': monitor.host_info.get(host, {}).get('known_offline', False) # Include known_offline
         }
         hosts_with_info.append(host_data)
     return jsonify(hosts_with_info)
