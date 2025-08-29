@@ -10,9 +10,14 @@ A Flask-based web application for real-time network monitoring with parallel pin
   - Green: Online (≤50ms latency)
   - Yellow: Slow (>50ms latency) 
   - Red: Offline/Unreachable
-- **Advanced Filtering**: Filter hosts by type, status, or combinations
+- **Host Status Tags**: Additional tags for offline hosts
+  - **Known**: Host is offline but explicitly marked as `known_offline: true` in `hosts.yaml`.
+  - **Unknown**: Host is offline and *not* marked as `known_offline: true` in `hosts.yaml`.
+- **Advanced Filtering**: Filter hosts by type, status, or combinations, including "Known Offline" and "Unknown Offline" states.
 - **Host Categorization**: Organized host groups with custom colors and labels
 - **Responsive Design**: Works on desktop and mobile devices
+
+---
 
 ## Quick Start
 
@@ -42,11 +47,13 @@ python app.py
 
 5. Open your browser to `http://localhost:30500`
 
+---
+
 ## Configuration
 
 ### Host Configuration (`hosts.yaml`)
 
-Configure your network hosts using the following format:
+Configure your network hosts using the following format. You can optionally mark an IP as `known_offline`.
 
 ```yaml
 hosts:
@@ -55,6 +62,8 @@ hosts:
     ips:
       - 10.49.9.18
       - 10.49.9.19
+      - 10.49.9.20:
+          known_offline: true # Example of a known offline host
       # ... more IPs
 
   - type: "IPMI-R2" 
@@ -68,7 +77,11 @@ hosts:
 **Configuration Options:**
 - `type`: Display name for the host group
 - `color`: Hex color code for the group tag
-- `ips`: List of IP addresses to monitor
+- `ips`: List of IP addresses to monitor. Each IP can be a simple string or a dictionary:
+    - `ip_address_string`: A regular IP address.
+    - `ip_address_string: { known_offline: true/false }`: An IP address with an optional `known_offline` flag. If `true`, the host will be marked as "Known Offline" if its status is Red (offline).
+
+---
 
 ## API Endpoints
 
@@ -82,22 +95,31 @@ hosts:
 | `/api/reload` | GET | Reload hosts from YAML file |
 | `/api/health` | GET | Application health check |
 
+---
+
 ## Filtering System
 
 The web interface includes an advanced filtering system:
 
 ### Filter Types
-1. **All**: Shows all hosts (default)
-2. **Host Types**: Filter by configured host types (Proxmox, IPMI-R2, etc.)
-3. **Status**: Filter by connection status (Online, Slow, Offline)
-4. **Logic**: Choose AND/OR logic for combining filters
+1.  **All**: Shows all hosts (default)
+2.  **Host Types**: Filter by configured host types (Proxmox, IPMI-R2, etc.)
+3.  **Status**: Filter by connection status
+    -   Online
+    -   Slow
+    -   Offline
+    -   **Known Offline**: Show hosts that are offline and explicitly marked as `known_offline: true` in `hosts.yaml`.
+    -   **Unknown Offline**: Show hosts that are offline but *not* marked as `known_offline: true` in `hosts.yaml`.
+4.  **Logic**: Choose AND/OR logic for combining filters
 
 ### Filter Behavior
-- **"All" enabled**: Shows everything, disables other filters
-- **"All" disabled**: Apply selected type and status filters
-- **AND Logic**: Show hosts matching selected types AND selected statuses
-- **OR Logic**: Show hosts matching selected types OR selected statuses
-- **No filters selected**: Shows no hosts when "All" is disabled
+-   **"All" enabled**: Shows everything, disables other filters.
+-   **"All" disabled**: Apply selected type and status/tag filters.
+-   **AND Logic**: Show hosts matching *all* selected types AND *all* selected statuses/tags.
+-   **OR Logic**: Show hosts matching *any* of the selected types OR *any* of the selected statuses/tags.
+-   **No filters selected**: Shows no hosts when "All" is disabled.
+
+---
 
 ## Technical Details
 
@@ -106,6 +128,7 @@ The web interface includes an advanced filtering system:
 - **Frontend**: Vanilla JavaScript with real-time updates
 - **Concurrency**: ThreadPoolExecutor for parallel ping processing
 - **Thread Safety**: Mutex locks for shared data structures
+- **CORS Support**: Configured for seamless frontend-backend communication
 
 ### Performance
 - Maximum 30 concurrent ping operations
@@ -131,12 +154,18 @@ lweye/
 └── docker-compose.yml  # Docker Compose config
 ```
 
+---
+
 ## Dependencies
 
 ```
 Flask==2.3.3
 PyYAML==6.0.1
+Werkzeug==2.3.7
+Flask-Cors==4.0.0
 ```
+
+---
 
 ## Docker Support
 
@@ -151,14 +180,17 @@ docker build -t network-monitor .
 docker run -p 30500:30500 network-monitor
 ```
 
+---
+
 ## Usage Examples
 
 ### Manual Operations
-- **Ping All**: Click "Start Ping Check" to force immediate ping of all hosts
-- **Reload Configuration**: Click "Reload Hosts" to refresh from `hosts.yaml`
-- **Filter by Type**: Disable "All", select specific host types
-- **Filter by Status**: Choose Online/Slow/Offline status filters
-- **Combine Filters**: Use AND/OR logic with multiple filter selections
+- **Ping All**: Click "Start Ping Check" to force immediate ping of all hosts.
+- **Reload Configuration**: Click "Reload Hosts" to refresh from `hosts.yaml`.
+- **Filter by Type**: Disable "All", select specific host types.
+- **Filter by Status**: Choose Online/Slow/Offline status filters.
+- **Filter by Known/Unknown**: Use the "Known Offline" or "Unknown Offline" filters to narrow down results.
+- **Combine Filters**: Use AND/OR logic with multiple filter selections.
 
 ### API Usage
 ```bash
@@ -172,26 +204,35 @@ curl http://localhost:30500/api/ping-all
 curl http://localhost:30500/api/health
 ```
 
+---
+
 ## Troubleshooting
 
 ### Common Issues
 
-1. **No hosts loaded**
-   - Check `hosts.yaml` syntax and file permissions
-   - View logs for YAML parsing errors
+1.  **No hosts loaded**
+    -   Check `hosts.yaml` syntax and file permissions.
+    -   View logs for YAML parsing errors.
 
-2. **Ping failures**
-   - Verify network connectivity
-   - Check firewall rules for ICMP traffic
-   - Ensure proper DNS resolution
+2.  **Ping failures**
+    -   Verify network connectivity.
+    -   Check firewall rules for ICMP traffic.
+    -   Ensure proper DNS resolution.
 
-3. **Performance issues**
-   - Reduce number of concurrent hosts
-   - Adjust ping timeout values
-   - Check system resource usage
+3.  **Performance issues**
+    -   Reduce number of concurrent hosts.
+    -   Adjust ping timeout values.
+    -   Check system resource usage.
+
+4.  **Frontend API errors ("Failed to parse URL" or CORS errors)**
+    -   Ensure your Flask backend is running on `http://localhost:30500`.
+    -   Verify that `Flask-Cors` is installed and correctly configured in `app.py`.
+    -   If running in a different environment, check the `API_BASE_URL` in `index.html` to ensure it resolves correctly.
 
 ### Logs
 Application logs are output to stdout with INFO level by default.
+
+---
 
 ## Contributing
 
@@ -200,6 +241,8 @@ Application logs are output to stdout with INFO level by default.
 3. Make your changes
 4. Test thoroughly
 5. Submit a pull request
+
+---
 
 ## License
 
